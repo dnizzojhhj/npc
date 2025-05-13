@@ -142,6 +142,7 @@ ADMIN_FILE = 'admin_data.json'
 VPS_FILE = 'vps_data.json'
 OWNER_FILE = 'owner_data.json'
 RESELLER_FILE = 'reseller_data.json'
+PUBLIC_GROUPS_FILE = 'public_groups.json'
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -267,6 +268,29 @@ def get_active_vps_list():
             continue
 
     return active_vps
+
+def load_public_groups():
+    """Load public groups from file"""
+    try:
+        if os.path.exists(PUBLIC_GROUPS_FILE):
+            with open(PUBLIC_GROUPS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading public groups: {e}")
+    return []
+
+def save_public_groups(groups):
+    """Save public groups to file"""
+    try:
+        with open(PUBLIC_GROUPS_FILE, 'w') as f:
+            json.dump(groups, f)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving public groups: {e}")
+        return False
+
+# Initialize PUBLIC_GROUPS by loading from file
+PUBLIC_GROUPS = load_public_groups()
 
 def is_allowed_group(message):
     """Check if message is from allowed group or private chat"""
@@ -1046,6 +1070,7 @@ def welcome_start(message):
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("📢 JOIN CHANNEL", url="https://t.me/NXTLVLPUBLIC"))
     keyboard.add(InlineKeyboardButton("👑 CREATOR", url="https://t.me/NEWAADMI"))
+    keyboard.add(InlineKeyboardButton("💬 DM FOR REBRANDING", url="https://t.me/NEWAADMI"))
 
     # Send video or fallback to text
     video_url = get_random_video()
@@ -1064,18 +1089,6 @@ def welcome_start(message):
             parse_mode="Markdown",
             reply_markup=keyboard
         )
-
-    # Rebranding message
-    bot.send_message(
-        chat_id=message.chat.id,
-        text=(
-            "↘️                                                       ↙️\n\n"
-            "*[➖ DM FOR REBRANDING ➖](https://t.me/NEWAADMI)*\n\n"
-            "↗️                                                       ↖️"
-        ),
-        parse_mode="Markdown",
-        disable_web_page_preview=True
-    )
 
     # Show reply keyboard
     bot.send_message(
@@ -3353,6 +3366,7 @@ def process_public_group_selection(message):
     # Add the selected group to public groups list
     if selected_group not in PUBLIC_GROUPS:
         PUBLIC_GROUPS.append(selected_group)
+        save_public_groups(PUBLIC_GROUPS)  # Save to file
     
     bot.send_message(
         message.chat.id,
@@ -3420,7 +3434,7 @@ def process_deactivate_public_selection(message):
 
     # Find which group was selected
     selected_group = None
-    for group_id in PUBLIC_GROUPS:
+    for group_id in PUBLIC_GROUPS:  # Changed from ALLOWED_GROUP_IDS to PUBLIC_GROUPS
         try:
             chat = bot.get_chat(group_id)
             if chat.title == selected_title:
@@ -3433,6 +3447,7 @@ def process_deactivate_public_selection(message):
 
     if selected_group:
         PUBLIC_GROUPS.remove(selected_group)
+        save_public_groups(PUBLIC_GROUPS)  # Save to file
         try:
             bot.send_message(selected_group, "❌ PUBLIC ATTACK MODE HAS BEEN DEACTIVATED.")
         except:
