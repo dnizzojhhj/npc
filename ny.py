@@ -221,29 +221,29 @@ def get_random_video():
 def check_user_authorization(user_id, chat_id=None):
     """Check if user is authorized to perform attacks"""
     
-    # पहले चेक करें कि यूजर ने चैनल जॉइन किया है या नहीं
+    # Check channel membership first
     try:
         chat_member = bot.get_chat_member("@NXTLVLPUBLIC", user_id)
         if chat_member.status not in ['member', 'administrator', 'creator']:
             return {
                 'authorized': False,
-                'message': '🚫 *ACCESS DENIED*\n\nआपको पहले हमारे ऑफिशियल चैनल को जॉइन करना होगा!\n\n📢 जॉइन करें: @NXTLVLPUBLIC'
+                'message': '🚫 *ACCESS DENIED*\n\nYou must join our official channel first!\n\n📢 Join: @NXTLVLPUBLIC'
             }
     except Exception as e:
         logger.error(f"Error checking channel membership: {e}")
         return {
             'authorized': False,
-            'message': '🚫 *ACCESS DENIED*\n\nचैनल मेम्बरशिप चेक करने में त्रुटि!\n\nकृपया बाद में पुनः प्रयास करें।'
+            'message': '🚫 *ACCESS DENIED*\n\nError checking channel membership!\n\nPlease try again later.'
         }
     
+    # Admins and owner have full access everywhere
+    if is_admin(user_id) or is_owner(user_id):
+        return {'authorized': True, 'message': ''}
+
     # Check if in public group where attacks are allowed
     if chat_id and chat_id in PUBLIC_GROUPS:
         return {'authorized': True, 'message': ''}
     
-    # Admins and owner have full access
-    if is_admin(user_id) or is_owner(user_id):
-        return {'authorized': True, 'message': ''}
-
     users = load_users()
     user = next((u for u in users if u.get('user_id') == user_id), None)
 
@@ -1233,7 +1233,7 @@ def attack_command(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Authorization check - pass chat_id for public group verification
+    # Authorization check - works for both group and private chats
     auth = check_user_authorization(user_id, chat_id)
     if not auth['authorized']:
         bot.send_message(
