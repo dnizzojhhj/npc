@@ -362,7 +362,7 @@ def execute_distributed_attack(vps_list, target_ip, target_port, duration, progr
             logger.error(f"Attack failed on {ip}: {str(e)}")
             failed += 1
 
-        if progress_callback:
+        if progress_callback and callable(progress_callback):
             progress_callback(index, total_vps, success, failed)
     
     return {
