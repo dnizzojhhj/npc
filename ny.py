@@ -277,7 +277,7 @@ def save_data():
     with open('keys.json', 'w') as f:
         json.dump({
             'keys': keys,
-            'redeemed_keys': redeemed_keys,
+            'redeemed_keys': list(redeemed_keys),  # Convert set to list
             'group_settings': GROUP_SETTINGS
         }, f)
 
@@ -292,7 +292,7 @@ def load_data():
         with open('keys.json', 'r') as f:
             data = json.load(f)
             keys = data.get('keys', {})
-            redeemed_keys = data.get('redeemed_keys', set())
+            redeemed_keys = set(data.get('redeemed_keys', []))  # Convert list to set
             GROUP_SETTINGS = data.get('group_settings', {})
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
